@@ -203,3 +203,24 @@ async def winner(message: types.Message):
     for i, w in enumerate(winners):
         text += f"{medals[i]} @{w}\n"
     await message.answer(text, parse_mode="HTML")
+
+@dp_admin.message(Command("clear"))
+@admin_only
+async def clear(message: types.Message):
+    cur.execute("DELETE FROM users")
+    conn.commit()
+    await message.answer("🧹 Ro'yxat tozalandi.")
+
+# ================= MAIN =================
+
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    await user_bot.delete_webhook(drop_pending_updates=True)
+    await admin_bot.delete_webhook(drop_pending_updates=True)
+    await asyncio.gather(
+        dp_user.start_polling(user_bot),
+        dp_admin.start_polling(admin_bot)
+    )
+
+if __name__ == "__main__":
+    asyncio.run(main())
