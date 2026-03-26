@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 import os
+import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -12,10 +13,25 @@ TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
+CHANNEL = "@starflow_premium"
+ADMIN_ID = 6019703915  # <-- SIZNING ID
+
 participants = set()
 
-CHANNEL = "@starflow_premium"
+# 🔹 DATABASE
+def save_users():
+    with open("users.json", "w") as f:
+        json.dump(list(participants), f)
 
+def load_users():
+    global participants
+    try:
+        with open("users.json", "r") as f:
+            participants = set(json.load(f))
+    except:
+        participants = set()
+
+# 🔹 OBUNA TEKSHIRISH
 async def check_sub(user_id):
     try:
         member = await bot.get_chat_member(CHANNEL, user_id)
@@ -23,24 +39,22 @@ async def check_sub(user_id):
     except:
         return False
 
-# MENU
+# 🔹 MENU
 menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🎁 Tanlovga qo‘shilish")],
+        [KeyboardButton(text="📊 Ishtirokchilar soni")],
         [KeyboardButton(text="🏆 G‘olibni aniqlash")]
     ],
     resize_keyboard=True
 )
 
-# START
+# 🔹 START
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer(
-        "⭐ StarFlow Giveaway botga xush kelibsiz!",
-        reply_markup=menu
-    )
+    await message.answer("⭐ Giveaway botga xush kelibsiz!", reply_markup=menu)
 
-# JOIN
+# 🔹 JOIN
 @dp.message(lambda message: message.text == "🎁 Tanlovga qo‘shilish")
 async def join(message: types.Message):
     user_id = message.from_user.id
@@ -55,20 +69,32 @@ async def join(message: types.Message):
 
     if user_id not in participants:
         participants.add(user_id)
+        save_users()
         await message.answer("Siz tanlovga qo‘shildingiz ✅")
     else:
         await message.answer("Siz allaqachon qo‘shilgansiz 😄")
 
-# WINNER
+# 🔹 COUNT
+@dp.message(lambda message: message.text == "📊 Ishtirokchilar soni")
+async def count_users(message: types.Message):
+    await message.answer(f"👥 Jami: {len(participants)} ta ishtirokchi")
+
+# 🔹 WINNER (ADMIN)
 @dp.message(lambda message: message.text == "🏆 G‘olibni aniqlash")
 async def winner(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Siz admin emassiz")
+        return
+
     if participants:
         win = random.choice(list(participants))
-        await message.answer(f"🏆 G‘olib ID: {win}")
+        user = await bot.get_chat(win)
+        name = user.full_name
+        await message.answer(f"🏆 G‘olib: {name}")
     else:
         await message.answer("Ishtirokchilar yo‘q ❌")
 
-# CHECK BUTTON
+# 🔹 CHECK BUTTON
 @dp.callback_query(lambda c: c.data == "check_sub")
 async def check_button(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -76,13 +102,15 @@ async def check_button(callback: types.CallbackQuery):
     if await check_sub(user_id):
         if user_id not in participants:
             participants.add(user_id)
+            save_users()
         await callback.message.answer("Siz tanlovga qo‘shildingiz ✅")
     else:
         await callback.message.answer("❌ Hali obuna bo‘lmadingiz!")
 
-# MAIN
+# 🔹 MAIN
 async def main():
     logging.basicConfig(level=logging.INFO)
+    load_users()
     print("Bot ishga tushdi...")
     await dp.start_polling(bot)
 
