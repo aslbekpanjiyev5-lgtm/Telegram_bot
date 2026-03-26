@@ -2,16 +2,15 @@ import asyncio
 import logging
 import random
 import os
-import json
+import sqlite3
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
-# 🔥 FAKE SERVER (Render uchun)
+# 🌐 Fake server (Render uchun)
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -19,7 +18,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is running")
 
 def run_server():
-    server = HTTPServer(("0.0.0.0", 10000), Handler)
+    PORT = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
     server.serve_forever()
 
 threading.Thread(target=run_server).start()
@@ -31,22 +31,19 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 CHANNEL = "@starflow_premium"
-ADMIN_ID = 6019703915  # sizning ID
+ADMIN_ID = 6019703915
 
-participants = set()
+# 💾 DATABASE (SQLite)
+conn = sqlite3.connect("users.db")
+cursor = conn.cursor()
 
-# 💾 DATABASE
-def save_users():
-    with open("users.json", "w") as f:
-        json.dump(list(participants), f)
-
-def load_users():
-    global participants
-    try:
-        with open("users.json", "r") as f:
-            participants = set(json.load(f))
-    except:
-        participants = set()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT
+)
+""")
+conn.commit()
 
 # 📢 OBUNA TEKSHIRISH
 async def check_sub(user_id):
@@ -59,9 +56,9 @@ async def check_sub(user_id):
 # 📋 MENU
 menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🎁 Tanlovga qo‘shilish")],
-        [KeyboardButton(text="📊 Ishtirokchilar soni")],
-        [KeyboardButton(text="🏆 G‘olibni aniqlash")]
+        [KeyboardButton(text="🎁 Qo‘shilish")],
+        [KeyboardButton(text="📊 Statistika")],
+        [KeyboardButton(text="🏆 Winner")]
     ],
     resize_keyboard=True
 )
@@ -69,65 +66,97 @@ menu = ReplyKeyboardMarkup(
 # 🚀 START
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer("⭐ Giveaway botga xush kelibsiz!", reply_markup=menu)
+    await message.answer("🔥 Giveaway botga xush kelibsiz!", reply_markup=menu)
 
 # 🎁 JOIN
-@dp.message(lambda message: message.text == "🎁 Tanlovga qo‘shilish")
+@dp.message(lambda m: m.text == "🎁 Qo‘shilish")
 async def join(message: types.Message):
     user_id = message.from_user.id
+    username = message.from_user.username
+
+    if not username:
+        await message.answer("❌ Username qo‘ying (@username) keyin qatnashing")
+        return
+
+    if message.from_user.is_bot:
+        return
 
     if not await check_sub(user_id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Obuna bo‘lish", url="https://t.me/starflow_premium")],
-            [InlineKeyboardButton(text="✅ Tekshirish", callback_data="check_sub")]
+            [InlineKeyboardButton(text="📢 Obuna", url="https://t.me/starflow_premium")],
+            [InlineKeyboardButton(text="✅ Tekshirish", callback_data="check")]
         ])
-        await message.answer("❌ Avval kanalga obuna bo‘ling:", reply_markup=kb)
+        await message.answer("❌ Kanalga obuna bo‘ling", reply_markup=kb)
         return
 
-    if user_id not in participants:
-        participants.add(user_id)
-        save_users()
-        await message.answer("Siz tanlovga qo‘shildingiz ✅")
-    else:
-        await message.answer("Siz allaqachon qo‘shilgansiz 😄")
+    cursor.execute("INSERT OR IGNORE INTO users VALUES (?, ?)", (user_id, username))
+    conn.commit()
 
-# 📊 COUNT
-@dp.message(lambda message: message.text == "📊 Ishtirokchilar soni")
-async def count_users(message: types.Message):
-    await message.answer(f"👥 Jami: {len(participants)} ta ishtirokchi")
+    await message.answer("✅ Siz qo‘shildingiz")
 
-# 🏆 WINNER (ADMIN)
-@dp.message(lambda message: message.text == "🏆 G‘olibni aniqlash")
+# 📊 STAT
+@dp.message(lambda m: m.text == "📊 Statistika")
+async def stat(message: types.Message):
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
+    await message.answer(f"👥 Jami: {count}")
+
+# 🏆 WINNER (3 ta)
+@dp.message(lambda m: m.text == "🏆 Winner")
 async def winner(message: types.Message):
     if message.from_user.id != ADMIN_ID:
-        await message.answer("❌ Siz admin emassiz")
+        await message.answer("❌ Faqat admin")
         return
 
-    if participants:
-        win = random.choice(list(participants))
-        user = await bot.get_chat(win)
-        name = user.full_name
-        await message.answer(f"🏆 G‘olib: {name}")
-    else:
-        await message.answer("Ishtirokchilar yo‘q ❌")
+    cursor.execute("SELECT user_id, username FROM users")
+    users = cursor.fetchall()
+
+    if len(users) < 3:
+        await message.answer("❌ Kam user")
+        return
+
+    winners = random.sample(users, 3)
+
+    text = "🏆 G‘oliblar:\n\n"
+    for i, w in enumerate(winners, 1):
+        text += f"{i}. @{w[1]}\n"
+
+    await message.answer(text)
 
 # 🔘 CHECK BUTTON
-@dp.callback_query(lambda c: c.data == "check_sub")
-async def check_button(callback: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data == "check")
+async def check_btn(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+    username = callback.from_user.username
 
     if await check_sub(user_id):
-        if user_id not in participants:
-            participants.add(user_id)
-            save_users()
-        await callback.message.answer("Siz tanlovga qo‘shildingiz ✅")
+        cursor.execute("INSERT OR IGNORE INTO users VALUES (?, ?)", (user_id, username))
+        conn.commit()
+        await callback.message.answer("✅ Qo‘shildingiz")
     else:
-        await callback.message.answer("❌ Hali obuna bo‘lmadingiz!")
+        await callback.message.answer("❌ Obuna yo‘q")
+
+# 👑 ADMIN PANEL
+@dp.message(Command("admin"))
+async def admin(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Tozalash", callback_data="clear")]
+    ])
+
+    await message.answer("👑 Admin panel", reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data == "clear")
+async def clear(callback: types.CallbackQuery):
+    cursor.execute("DELETE FROM users")
+    conn.commit()
+    await callback.message.answer("🗑 Baza tozalandi")
 
 # ▶️ MAIN
 async def main():
     logging.basicConfig(level=logging.INFO)
-    load_users()
     print("Bot ishga tushdi...")
     await dp.start_polling(bot)
 
