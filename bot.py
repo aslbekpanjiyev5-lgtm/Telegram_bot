@@ -3,22 +3,39 @@ import logging
 import random
 import os
 import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# 🔥 FAKE SERVER (Render uchun)
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", 10000), Handler)
+    server.serve_forever()
+
+threading.Thread(target=run_server).start()
+
+# 🔐 TOKEN
 TOKEN = os.getenv("BOT_TOKEN")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 CHANNEL = "@starflow_premium"
-ADMIN_ID = 6019703915  # <-- SIZNING ID
+ADMIN_ID = 6019703915  # sizning ID
 
 participants = set()
 
-# 🔹 DATABASE
+# 💾 DATABASE
 def save_users():
     with open("users.json", "w") as f:
         json.dump(list(participants), f)
@@ -31,7 +48,7 @@ def load_users():
     except:
         participants = set()
 
-# 🔹 OBUNA TEKSHIRISH
+# 📢 OBUNA TEKSHIRISH
 async def check_sub(user_id):
     try:
         member = await bot.get_chat_member(CHANNEL, user_id)
@@ -39,7 +56,7 @@ async def check_sub(user_id):
     except:
         return False
 
-# 🔹 MENU
+# 📋 MENU
 menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🎁 Tanlovga qo‘shilish")],
@@ -49,12 +66,12 @@ menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# 🔹 START
+# 🚀 START
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer("⭐ Giveaway botga xush kelibsiz!", reply_markup=menu)
 
-# 🔹 JOIN
+# 🎁 JOIN
 @dp.message(lambda message: message.text == "🎁 Tanlovga qo‘shilish")
 async def join(message: types.Message):
     user_id = message.from_user.id
@@ -74,12 +91,12 @@ async def join(message: types.Message):
     else:
         await message.answer("Siz allaqachon qo‘shilgansiz 😄")
 
-# 🔹 COUNT
+# 📊 COUNT
 @dp.message(lambda message: message.text == "📊 Ishtirokchilar soni")
 async def count_users(message: types.Message):
     await message.answer(f"👥 Jami: {len(participants)} ta ishtirokchi")
 
-# 🔹 WINNER (ADMIN)
+# 🏆 WINNER (ADMIN)
 @dp.message(lambda message: message.text == "🏆 G‘olibni aniqlash")
 async def winner(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -94,7 +111,7 @@ async def winner(message: types.Message):
     else:
         await message.answer("Ishtirokchilar yo‘q ❌")
 
-# 🔹 CHECK BUTTON
+# 🔘 CHECK BUTTON
 @dp.callback_query(lambda c: c.data == "check_sub")
 async def check_button(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -107,7 +124,7 @@ async def check_button(callback: types.CallbackQuery):
     else:
         await callback.message.answer("❌ Hali obuna bo‘lmadingiz!")
 
-# 🔹 MAIN
+# ▶️ MAIN
 async def main():
     logging.basicConfig(level=logging.INFO)
     load_users()
