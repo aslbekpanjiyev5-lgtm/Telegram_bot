@@ -75,7 +75,7 @@ async def join(message: types.Message):
     username = message.from_user.username
 
     if not username:
-        await message.answer("❌ Username qo‘ying (@username) keyin qatnashing")
+        await message.answer("❌ Username qo‘ying (@username)")
         return
 
     if message.from_user.is_bot:
@@ -99,7 +99,7 @@ async def join(message: types.Message):
 async def stat(message: types.Message):
     cursor.execute("SELECT COUNT(*) FROM users")
     count = cursor.fetchone()[0]
-    await message.answer(f"👥 Jami: {count}")
+    await message.answer(f"👥 Jami: {count} ta")
 
 # 🏆 WINNER (3 ta)
 @dp.message(lambda m: m.text == "🏆 Winner")
@@ -112,7 +112,7 @@ async def winner(message: types.Message):
     users = cursor.fetchall()
 
     if len(users) < 3:
-        await message.answer("❌ Kam user")
+        await message.answer("❌ Kamida 3 user kerak")
         return
 
     winners = random.sample(users, 3)
@@ -143,7 +143,7 @@ async def admin(message: types.Message):
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑 Tozalash", callback_data="clear")]
+        [InlineKeyboardButton(text="🗑 Bazani tozalash", callback_data="clear")]
     ])
 
     await message.answer("👑 Admin panel", reply_markup=kb)
