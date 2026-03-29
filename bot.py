@@ -9,8 +9,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-# 🔐 TOKENLAR
+# 🔐 TOKEN
 USER_BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 
@@ -72,36 +73,73 @@ CREATE TABLE IF NOT EXISTS winners (
 conn.commit()
 
 # 🔧 CONFIG
-def set_config(key, value):
-    cur.execute("REPLACE INTO config VALUES (?, ?)", (key, value))
+def set_config(k, v):
+    cur.execute("REPLACE INTO config VALUES (?, ?)", (k, v))
     conn.commit()
 
-def get_config(key, default=None):
-    cur.execute("SELECT value FROM config WHERE key=?", (key,))
-    row = cur.fetchone()
-    return row[0] if row else default
+def get_config(k, d=None):
+    cur.execute("SELECT value FROM config WHERE key=?", (k,))
+    r = cur.fetchone()
+    return r[0] if r else d
 
 def get_user_count():
     cur.execute("SELECT COUNT(*) FROM users")
     return cur.fetchone()[0]
 
-# default values
+# default
 if not get_config("active"): set_config("active", "off")
 if not get_config("code"): set_config("code", "1234")
 if not get_config("winner_count"): set_config("winner_count", "3")
 
-# ================= USER BOT =================
+# 🎛 UI BUTTONS
+user_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🎁 Qatnashish")],
+        [KeyboardButton(text="📊 Statistika")]
+    ],
+    resize_keyboard=True
+)
+
+admin_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🟢 Yoqish"), KeyboardButton(text="🔴 O‘chirish")],
+        [KeyboardButton(text="🏆 Winner"), KeyboardButton(text="📊 Stat")],
+        [KeyboardButton(text="♻️ New Game"), KeyboardButton(text="📜 History")]
+    ],
+    resize_keyboard=True
+)
+
+# ================= USER =================
 
 @dp_user.message(Command("start"))
 async def start_user(message: types.Message):
     if get_config("active") != "on":
-        await message.answer("⛔ Giveaway hozir faol emas.")
+        await message.answer("⛔ <b>Giveaway faol emas</b>", parse_mode="HTML")
         return
-    await message.answer("🎁 Giveaway boshlandi!\n\n🔑 Kodni yuboring.")
+
+    await message.answer(
+        "🎁 <b>SUPER GIVEAWAY</b>\n\n"
+        "🏆 Sovrinlar tayyor!\n"
+        "🔑 Kod yuboring va qatnashing\n\n"
+        "⚡ Shoshiling!",
+        parse_mode="HTML",
+        reply_markup=user_menu
+    )
+
+@dp_user.message(lambda m: m.text == "🎁 Qatnashish")
+async def join_btn(message: types.Message):
+    await message.answer("🔑 Kodni yuboring:")
+
+@dp_user.message(lambda m: m.text == "📊 Statistika")
+async def stat_btn(message: types.Message):
+    await message.answer(f"👥 {get_user_count()} ta ishtirokchi")
 
 @dp_user.message()
 async def join_user(message: types.Message):
     if get_config("active") != "on":
+        return
+
+    if message.text.startswith("/"):
         return
 
     if message.text != get_config("code"):
@@ -116,81 +154,59 @@ async def join_user(message: types.Message):
 
     cur.execute("SELECT * FROM users WHERE user_id=?", (user.id,))
     if cur.fetchone():
-        await message.answer("ℹ️ Siz allaqachon qatnashgansiz")
+        await message.answer("ℹ️ Siz qatnashgansiz")
         return
 
     cur.execute("INSERT INTO users VALUES (?, ?, ?)",
         (user.id, user.username, datetime.now().strftime("%Y-%m-%d %H:%M")))
     conn.commit()
 
-    await message.answer("✅ Qatnashdingiz!")
+    await message.answer("✅ Qo‘shildingiz! Omad 🍀")
 
     await admin_bot.send_message(
         ADMIN_ID,
-        f"➕ @{user.username} qo‘shildi\n📊 Jami: {get_user_count()}"
+        f"➕ @{user.username}\n📊 {get_user_count()} ta"
     )
 
-# ================= ADMIN BOT =================
+# ================= ADMIN =================
 
 def admin_only(func):
-    async def wrapper(message: types.Message):
+    async def wrap(message: types.Message):
         if message.from_user.id != ADMIN_ID:
             return
         await func(message)
-    return wrapper
+    return wrap
 
 @dp_admin.message(Command("start"))
 @admin_only
-async def admin_panel(message: types.Message):
+async def admin_start(message: types.Message):
     await message.answer(
-        "👑 ADMIN PANEL\n\n"
-        "/on - yoqish\n"
-        "/off - o‘chirish\n"
-        "/stat - statistika\n"
-        "/setcode 1234\n"
-        "/setwinner 3\n"
-        "/winner - tanlash\n"
-        "/newgame - yangi o‘yin\n"
-        "/history - history"
+        "👑 <b>ADMIN PANEL</b>",
+        parse_mode="HTML",
+        reply_markup=admin_menu
     )
 
-@dp_admin.message(Command("on"))
+@dp_admin.message(lambda m: m.text == "🟢 Yoqish")
 @admin_only
 async def on_bot(message: types.Message):
     set_config("active", "on")
     await message.answer("🟢 Bot yoqildi")
 
-@dp_admin.message(Command("off"))
+@dp_admin.message(lambda m: m.text == "🔴 O‘chirish")
 @admin_only
 async def off_bot(message: types.Message):
     set_config("active", "off")
-    await message.answer("🔴 Bot o‘chdi")
+    await message.answer("🔴 Bot o‘chirildi")
 
-@dp_admin.message(Command("stat"))
+@dp_admin.message(lambda m: m.text == "📊 Stat")
 @admin_only
-async def stat(message: types.Message):
+async def stat_admin(message: types.Message):
     await message.answer(f"👥 {get_user_count()} ta user")
 
-@dp_admin.message(Command("setcode"))
-@admin_only
-async def setcode(message: types.Message):
-    code = message.text.split()[1]
-    set_config("code", code)
-    await message.answer(f"🔑 Kod: {code}")
-
-@dp_admin.message(Command("setwinner"))
-@admin_only
-async def setwinner(message: types.Message):
-    count = message.text.split()[1]
-    set_config("winner_count", count)
-    await message.answer(f"🏆 Winner: {count}")
-
-# 🔥 WINNER FIXED
-@dp_admin.message(Command("winner"))
+@dp_admin.message(lambda m: m.text == "🏆 Winner")
 @admin_only
 async def winner(message: types.Message):
 
-    # old winners check
     cur.execute("SELECT username FROM winners")
     old = [x[0] for x in cur.fetchall()]
 
@@ -199,7 +215,7 @@ async def winner(message: types.Message):
 
     available = [u for u in users if u not in old]
 
-    count = int(get_config("winner_count", "3"))
+    count = int(get_config("winner_count"))
 
     if len(available) < count:
         await message.answer("❌ Yetarli user yo‘q")
@@ -207,37 +223,37 @@ async def winner(message: types.Message):
 
     winners = random.sample(available, count)
 
-    for w in winners:
+    medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+
+    text = "🏆 <b>G‘OLIBLAR</b>\n\n"
+
+    for i, w in enumerate(winners):
+        text += f"{medals[i]} @{w}\n"
+
         cur.execute("INSERT INTO winners(username, created_at) VALUES (?, ?)",
                     (w, datetime.now().strftime("%Y-%m-%d %H:%M")))
+
     conn.commit()
 
-    text = "🏆 G'oliblar:\n\n"
-    for i, w in enumerate(winners, 1):
-        text += f"{i}. @{w}\n"
+    await message.answer(text, parse_mode="HTML")
 
-    await message.answer(text)
-
-    # 🔥 congrat message
     for w in winners:
         try:
             cur.execute("SELECT user_id FROM users WHERE username=?", (w,))
             uid = cur.fetchone()[0]
-            await user_bot.send_message(uid, "🎉 Tabriklaymiz! Siz yutdingiz!")
+            await user_bot.send_message(uid, "🎉 Siz yutdingiz!")
         except:
             pass
 
-# 🔄 NEW GAME
-@dp_admin.message(Command("newgame"))
+@dp_admin.message(lambda m: m.text == "♻️ New Game")
 @admin_only
-async def newgame(message: types.Message):
+async def new_game(message: types.Message):
     cur.execute("DELETE FROM users")
     cur.execute("DELETE FROM winners")
     conn.commit()
     await message.answer("♻️ Yangi o‘yin boshlandi")
 
-# 📜 HISTORY
-@dp_admin.message(Command("history"))
+@dp_admin.message(lambda m: m.text == "📜 History")
 @admin_only
 async def history(message: types.Message):
     cur.execute("SELECT username, created_at FROM winners ORDER BY id DESC LIMIT 10")
@@ -247,11 +263,12 @@ async def history(message: types.Message):
         await message.answer("Bo‘sh")
         return
 
-    text = "📜 Oxirgi winnerlar:\n\n"
-    for w in data:
-        text += f"@{w[0]} - {w[1]}\n"
+    text = "📜 <b>History</b>\n\n"
 
-    await message.answer(text)
+    for w in data:
+        text += f"🏅 @{w[0]} — {w[1]}\n"
+
+    await message.answer(text, parse_mode="HTML")
 
 # ================= MAIN =================
 
