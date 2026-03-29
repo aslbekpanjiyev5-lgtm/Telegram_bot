@@ -10,6 +10,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.fsm.storage.memory import MemoryStorage
 
 # ╔══════════════════════════════════════╗
 # ║         🔐 TOKEN SOZLAMA            ║
@@ -21,8 +22,8 @@ ADMIN_ID        = 6019703915
 user_bot  = Bot(token=USER_BOT_TOKEN)
 admin_bot = Bot(token=ADMIN_BOT_TOKEN)
 
-dp_user  = Dispatcher()
-dp_admin = Dispatcher()
+dp_user  = Dispatcher(storage=MemoryStorage())
+dp_admin = Dispatcher(storage=MemoryStorage())
 
 # ╔══════════════════════════════════════╗
 # ║       🌐 SERVER (Render fix)        ║
@@ -91,9 +92,11 @@ def get_user_count():
     cur.execute("SELECT COUNT(*) FROM users")
     return cur.fetchone()[0]
 
-if not get_config("active"):      set_config("active",       "off")
-if not get_config("code"):        set_config("code",         "1234")
-if not get_config("winner_count"):set_config("winner_count", "1")
+if not get_config("active"):        set_config("active",        "off")
+if not get_config("code"):          set_config("code",          "1234")
+if not get_config("winner_count"):  set_config("winner_count",  "1")
+if not get_config("waiting_code"):  set_config("waiting_code",  "no")
+if not get_config("waiting_wcount"):set_config("waiting_wcount","no")
 
 # ╔══════════════════════════════════════╗
 # ║         🎛 KLAVIATURA               ║
@@ -110,7 +113,8 @@ admin_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🟢 Yoqish"),      KeyboardButton(text="🔴 O'chirish")],
         [KeyboardButton(text="🏆 Winner"),       KeyboardButton(text="📊 Stat")],
-        [KeyboardButton(text="⚙️ Winner soni"),  KeyboardButton(text="♻️ New Game")]
+        [KeyboardButton(text="⚙️ Winner soni"),  KeyboardButton(text="🔑 Kod o'zgartir")],
+        [KeyboardButton(text="♻️ New Game")]
     ],
     resize_keyboard=True
 )
@@ -172,10 +176,8 @@ async def stat_user(message: types.Message):
 async def join_user(message: types.Message):
     if get_config("active") != "on":
         return
-
     if message.text.startswith("/"):
         return
-
     if message.text != get_config("code"):
         await message.answer(
             "❌ *Noto'g'ri kod!*\n\n"
@@ -250,9 +252,10 @@ async def admin_start(message: types.Message):
         "╔══════════════════════════╗\n"
         "║    👑 ADMIN PANEL      ║\n"
         "╚══════════════════════════╝\n\n"
-        f"📌 Holat: {status}\n"
+        f"📌 Holat:          {status}\n"
         f"👥 Ishtirokchilar: *{get_user_count()}* ta\n"
-        f"🏆 Winner soni: *{get_config('winner_count')}* ta\n\n"
+        f"🏆 Winner soni:    *{get_config('winner_count')}* ta\n"
+        f"🔑 Joriy kod:      *{get_config('code')}*\n\n"
         "⬇️ Kerakli bo'limni tanlang:",
         reply_markup=admin_menu,
         parse_mode="Markdown"
@@ -267,7 +270,9 @@ async def on_bot(message: types.Message):
         "║    🟢 BOT YOQILDI!    ║\n"
         "╚══════════════════════════╝\n\n"
         "✅ Giveaway boshlandi!\n"
-        "👥 Foydalanuvchilar qatnasha oladi."
+        f"🔑 Joriy kod: *{get_config('code')}*\n"
+        "👥 Foydalanuvchilar qatnasha oladi.",
+        parse_mode="Markdown"
     )
 
 @dp_admin.message(lambda m: m.text == "🔴 O'chirish")
@@ -287,15 +292,14 @@ async def off_bot(message: types.Message):
 async def stat_admin(message: types.Message):
     count  = get_user_count()
     status = "🟢 Aktiv" if get_config("active") == "on" else "🔴 Nofaol"
-
     cur.execute("SELECT COUNT(*) FROM winners")
     winner_count = cur.fetchone()[0]
-
     await message.answer(
         "╔══════════════════════════╗\n"
         "║      📊 STATISTIKA     ║\n"
         "╚══════════════════════════╝\n\n"
-        f"📌 Holat:         {status}\n"
+        f"📌 Holat:          {status}\n"
+        f"🔑 Joriy kod:      *{get_config('code')}*\n"
         f"👥 Ishtirokchilar: *{count}* ta\n"
         f"🏆 G'oliblar:      *{winner_count}* ta\n"
         f"🎯 Winner kvotasi: *{get_config('winner_count')}* ta\n"
@@ -303,9 +307,28 @@ async def stat_admin(message: types.Message):
         parse_mode="Markdown"
     )
 
+# ─── 🔑 KOD O'ZGARTIRISH ────────────────────────────
+@dp_admin.message(lambda m: m.text == "🔑 Kod o'zgartir")
+@admin_only
+async def ask_new_code(message: types.Message):
+    set_config("waiting_code",  "yes")
+    set_config("waiting_wcount","no")
+    await message.answer(
+        "╔══════════════════════════╗\n"
+        "║   🔑 KOD O'ZGARTIRISH ║\n"
+        "╚══════════════════════════╝\n\n"
+        f"📌 Hozirgi kod: *{get_config('code')}*\n\n"
+        "✏️ Yangi kodni yuboring:\n"
+        "_(masalan: SUMMER2025, abc123)_",
+        parse_mode="Markdown"
+    )
+
+# ─── ⚙️ WINNER SONI ─────────────────────────────────
 @dp_admin.message(lambda m: m.text == "⚙️ Winner soni")
 @admin_only
 async def ask_winner_count(message: types.Message):
+    set_config("waiting_wcount","yes")
+    set_config("waiting_code",  "no")
     await message.answer(
         "⚙️ *Winner soni sozlash*\n\n"
         f"📌 Hozirgi qiymat: *{get_config('winner_count')}* ta\n\n"
@@ -313,16 +336,7 @@ async def ask_winner_count(message: types.Message):
         parse_mode="Markdown"
     )
 
-@dp_admin.message(lambda m: m.text.isdigit())
-@admin_only
-async def set_winner_count(message: types.Message):
-    set_config("winner_count", message.text)
-    await message.answer(
-        f"✅ *Winner soni yangilandi!*\n\n"
-        f"🏆 Yangi qiymat: *{message.text}* ta",
-        parse_mode="Markdown"
-    )
-
+# ─── 🏆 WINNER ──────────────────────────────────────
 @dp_admin.message(lambda m: m.text == "🏆 Winner")
 @admin_only
 async def winner(message: types.Message):
@@ -341,7 +355,7 @@ async def winner(message: types.Message):
             "║      ⚠️ XATOLIK!       ║\n"
             "╚══════════════════════════╝\n\n"
             f"❌ Yetarli ishtirokchi yo'q!\n\n"
-            f"👥 Mavjud: *{len(available)}* ta\n"
+            f"👥 Mavjud:  *{len(available)}* ta\n"
             f"🎯 Kerakli: *{count}* ta",
             parse_mode="Markdown"
         )
@@ -355,16 +369,13 @@ async def winner(message: types.Message):
         "║    🏆 G'OLIBLAR!       ║\n"
         "╚══════════════════════════╝\n\n"
     )
-
     for i, w in enumerate(winners):
-        medal  = medals[i] if i < len(medals) else "🎖️"
-        text  += f"{medal} @{w}\n"
+        medal = medals[i] if i < len(medals) else "🎖️"
+        text += f"{medal} @{w}\n"
         cur.execute("INSERT OR IGNORE INTO winners VALUES (?)", (w,))
 
     conn.commit()
-
     text += f"\n🎊 Tabriklaymiz!\n👥 Jami ishtirokchilar: *{get_user_count()}* ta"
-
     await message.answer(text, parse_mode="Markdown")
 
     for w in winners:
@@ -386,13 +397,16 @@ async def winner(message: types.Message):
         except:
             pass
 
+# ─── ♻️ NEW GAME ─────────────────────────────────────
 @dp_admin.message(lambda m: m.text == "♻️ New Game")
 @admin_only
 async def reset(message: types.Message):
     cur.execute("DELETE FROM users")
     cur.execute("DELETE FROM winners")
     conn.commit()
-    set_config("active", "off")
+    set_config("active",        "off")
+    set_config("waiting_code",  "no")
+    set_config("waiting_wcount","no")
 
     await message.answer(
         "╔══════════════════════════╗\n"
@@ -402,8 +416,52 @@ async def reset(message: types.Message):
         "📋 Nima tozalandi:\n"
         "  🗑️ Barcha ishtirokchilar\n"
         "  🗑️ G'oliblar ro'yxati\n\n"
+        f"🔑 Joriy kod: *{get_config('code')}*\n"
         "📌 Bot holati: 🔴 Nofaol\n"
-        "🟢 Boshlash uchun « Yoqish » tugmasini bosing."
+        "🟢 Boshlash uchun « Yoqish » tugmasini bosing.",
+        parse_mode="Markdown"
+    )
+
+# ─── UMUMIY MATN HANDLER ────────────────────────────
+@dp_admin.message()
+@admin_only
+async def handle_text(message: types.Message):
+
+    # Yangi kod kutilayotgan bo'lsa
+    if get_config("waiting_code") == "yes":
+        new_code = message.text.strip()
+        if len(new_code) < 2:
+            await message.answer("❌ Kod kamida 2 ta belgi bo'lishi kerak!")
+            return
+        set_config("code",         new_code)
+        set_config("waiting_code", "no")
+        await message.answer(
+            "╔══════════════════════════╗\n"
+            "║   ✅ KOD YANGILANDI!   ║\n"
+            "╚══════════════════════════╝\n\n"
+            f"🔑 Yangi kod: *{new_code}*\n\n"
+            "📢 Ishtirokchilar shu kodni yuborishlari kerak!",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Winner soni kutilayotgan bo'lsa
+    if get_config("waiting_wcount") == "yes":
+        if not message.text.strip().isdigit():
+            await message.answer("❌ Faqat raqam yuboring! (masalan: 3)")
+            return
+        set_config("winner_count",  message.text.strip())
+        set_config("waiting_wcount","no")
+        await message.answer(
+            f"✅ *Winner soni yangilandi!*\n\n"
+            f"🏆 Yangi qiymat: *{message.text.strip()}* ta",
+            parse_mode="Markdown"
+        )
+        return
+
+    await message.answer(
+        "❓ Noma'lum buyruq.\n/start — menyuni ochish",
+        reply_markup=admin_menu
     )
 
 # ╔══════════════════════════════════════╗
@@ -414,10 +472,11 @@ async def main():
 
     await user_bot.delete_webhook(drop_pending_updates=True)
     await admin_bot.delete_webhook(drop_pending_updates=True)
+    await asyncio.sleep(2)
 
     await asyncio.gather(
-        dp_user.start_polling(user_bot),
-        dp_admin.start_polling(admin_bot)
+        dp_user.start_polling(user_bot,   allowed_updates=["message"]),
+        dp_admin.start_polling(admin_bot, allowed_updates=["message"])
     )
 
 if __name__ == "__main__":
