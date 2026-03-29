@@ -3,14 +3,12 @@ import logging
 import random
 import os
 import sqlite3
-import time
+import threading
 from datetime import datetime
-from functools import wraps
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 # 🔐 TOKENLAR
 USER_BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -18,290 +16,255 @@ ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 
 ADMIN_ID = 6019703915
 
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-bot-6nns.onrender.com")
-
-USER_WEBHOOK_PATH = "/webhook/user"
-ADMIN_WEBHOOK_PATH = "/webhook/admin"
-
 user_bot = Bot(token=USER_BOT_TOKEN)
 admin_bot = Bot(token=ADMIN_BOT_TOKEN)
 
 dp_user = Dispatcher()
 dp_admin = Dispatcher()
 
+# 🌐 SERVER (UPTIMEROBOT FIX)
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    PORT = int(os.environ.get("PORT", 10000))
+    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
+
 # 💾 DATABASE
 conn = sqlite3.connect("system.db", check_same_thread=False)
 cur = conn.cursor()
 
-cur.execute("""CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER,
+cur.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
     username TEXT,
-    game_id TEXT,
     joined_at TEXT
-)""")
+)
+""")
 
-cur.execute("""CREATE TABLE IF NOT EXISTS config (
+cur.execute("""
+CREATE TABLE IF NOT EXISTS config (
     key TEXT PRIMARY KEY,
     value TEXT
-)""")
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS winners (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    created_at TEXT
+)
+""")
+
 conn.commit()
 
 # 🔧 CONFIG
-def set_config(k, v):
-    cur.execute("REPLACE INTO config VALUES (?, ?)", (k, v))
+def set_config(key, value):
+    cur.execute("REPLACE INTO config VALUES (?, ?)", (key, value))
     conn.commit()
 
-def get_config(k, d=None):
-    cur.execute("SELECT value FROM config WHERE key=?", (k,))
-    r = cur.fetchone()
-    return r[0] if r else d
+def get_config(key, default=None):
+    cur.execute("SELECT value FROM config WHERE key=?", (key,))
+    row = cur.fetchone()
+    return row[0] if row else default
 
-if not get_config("active"):       set_config("active", "off")
-if not get_config("code"):         set_config("code", "1234")
+def get_user_count():
+    cur.execute("SELECT COUNT(*) FROM users")
+    return cur.fetchone()[0]
+
+# default values
+if not get_config("active"): set_config("active", "off")
+if not get_config("code"): set_config("code", "1234")
 if not get_config("winner_count"): set_config("winner_count", "3")
-
-# ✅ Admin decorator
-def admin_only(func):
-    @wraps(func)
-    async def wrapper(message: types.Message, *args, **kwargs):
-        if message.from_user.id != ADMIN_ID:
-            await message.answer("🚫 Ruxsat yo'q!")
-            return
-        await func(message, *args, **kwargs)
-    return wrapper
 
 # ================= USER BOT =================
 
 @dp_user.message(Command("start"))
 async def start_user(message: types.Message):
     if get_config("active") != "on":
-        await message.answer("⛔ Giveaway hozircha faol emas.")
+        await message.answer("⛔ Giveaway hozir faol emas.")
         return
-    await message.answer(
-        "🎁 <b>Giveawayga xush kelibsiz!</b>\n\n"
-        "🔑 Kodni yuboring va g'oliblar qatoriga qo'shiling!",
-        parse_mode="HTML"
-    )
+    await message.answer("🎁 Giveaway boshlandi!\n\n🔑 Kodni yuboring.")
 
 @dp_user.message()
-async def join(message: types.Message):
+async def join_user(message: types.Message):
     if get_config("active") != "on":
         return
-    if not message.text:
-        return
+
     if message.text != get_config("code"):
-        await message.answer("❌ Noto'g'ri kod!")
+        await message.answer("❌ Noto‘g‘ri kod")
         return
 
     user = message.from_user
-    game_id = get_config("current_game")
 
     if not user.username:
-        await message.answer("⚠️ Telegram username qo'ying va qaytadan yuboring.")
+        await message.answer("❌ Username qo‘ying")
         return
 
-    cur.execute("SELECT * FROM users WHERE user_id=? AND game_id=?", (user.id, game_id))
+    cur.execute("SELECT * FROM users WHERE user_id=?", (user.id,))
     if cur.fetchone():
-        await message.answer("ℹ️ Siz allaqachon qatnashyapsiz!")
+        await message.answer("ℹ️ Siz allaqachon qatnashgansiz")
         return
 
-    cur.execute("INSERT INTO users VALUES (?, ?, ?, ?)",
-                (user.id, user.username, game_id,
-                 datetime.now().strftime("%Y-%m-%d %H:%M")))
+    cur.execute("INSERT INTO users VALUES (?, ?, ?)",
+        (user.id, user.username, datetime.now().strftime("%Y-%m-%d %H:%M")))
     conn.commit()
 
-    await message.answer("✅ Muvaffaqiyatli qo'shildingiz! Omad tilaymiz 🍀")
+    await message.answer("✅ Qatnashdingiz!")
 
-    cur.execute("SELECT COUNT(*) FROM users WHERE game_id=?", (game_id,))
-    count = cur.fetchone()[0]
-
-    try:
-        await admin_bot.send_message(
-            ADMIN_ID,
-            f"➕ <b>Yangi ishtirokchi:</b> @{user.username}\n📊 Jami: {count} ta",
-            parse_mode="HTML"
-        )
-    except:
-        pass
+    await admin_bot.send_message(
+        ADMIN_ID,
+        f"➕ @{user.username} qo‘shildi\n📊 Jami: {get_user_count()}"
+    )
 
 # ================= ADMIN BOT =================
+
+def admin_only(func):
+    async def wrapper(message: types.Message):
+        if message.from_user.id != ADMIN_ID:
+            return
+        await func(message)
+    return wrapper
 
 @dp_admin.message(Command("start"))
 @admin_only
 async def admin_panel(message: types.Message):
-    status = "🟢 Faol" if get_config("active") == "on" else "🔴 To'xtagan"
     await message.answer(
-        f"👑 <b>ADMIN PANEL</b>\n\n"
-        f"📌 Holat: {status}\n"
-        f"🔑 Kod: <code>{get_config('code')}</code>\n"
-        f"🏆 G'oliblar soni: {get_config('winner_count')}\n\n"
-        f"🟢 /on — yangi o'yin boshlash\n"
-        f"🔴 /off — o'yinni to'xtatish\n"
-        f"📊 /stat — statistika\n"
-        f"👥 /users — ishtirokchilar\n"
-        f"🔑 /setcode 1234 — kod\n"
-        f"🏆 /setwinner 3 — g'oliblar soni\n"
-        f"🎯 /winner — g'oliblarni aniqlash\n"
-        f"🧹 /clear — ro'yxatni tozalash",
-        parse_mode="HTML"
+        "👑 ADMIN PANEL\n\n"
+        "/on - yoqish\n"
+        "/off - o‘chirish\n"
+        "/stat - statistika\n"
+        "/setcode 1234\n"
+        "/setwinner 3\n"
+        "/winner - tanlash\n"
+        "/newgame - yangi o‘yin\n"
+        "/history - history"
     )
 
 @dp_admin.message(Command("on"))
 @admin_only
-async def on_game(message: types.Message):
-    game_id = str(int(time.time()))
-    set_config("current_game", game_id)
+async def on_bot(message: types.Message):
     set_config("active", "on")
-    await message.answer(
-        f"🟢 <b>Yangi Giveaway boshlandi!</b>\n"
-        f"🎮 Game ID: <code>{game_id}</code>\n"
-        f"🔑 Kod: <code>{get_config('code')}</code>",
-        parse_mode="HTML"
-    )
+    await message.answer("🟢 Bot yoqildi")
 
 @dp_admin.message(Command("off"))
 @admin_only
-async def off_game(message: types.Message):
+async def off_bot(message: types.Message):
     set_config("active", "off")
-    game_id = get_config("current_game")
-    cur.execute("SELECT COUNT(*) FROM users WHERE game_id=?", (game_id,))
-    count = cur.fetchone()[0]
-    await message.answer(
-        f"🔴 <b>Giveaway to'xtatildi!</b>\n"
-        f"📊 Jami ishtirokchilar: {count} ta",
-        parse_mode="HTML"
-    )
+    await message.answer("🔴 Bot o‘chdi")
 
 @dp_admin.message(Command("stat"))
 @admin_only
 async def stat(message: types.Message):
-    game_id = get_config("current_game")
-    cur.execute("SELECT COUNT(*) FROM users WHERE game_id=?", (game_id,))
-    count = cur.fetchone()[0]
-    status = "🟢 Faol" if get_config("active") == "on" else "🔴 To'xtagan"
-    await message.answer(
-        f"📊 <b>Statistika</b>\n\n"
-        f"📌 Holat: {status}\n"
-        f"👥 Ishtirokchilar: {count} ta\n"
-        f"🔑 Kod: <code>{get_config('code')}</code>\n"
-        f"🏆 G'oliblar soni: {get_config('winner_count')}",
-        parse_mode="HTML"
-    )
-
-@dp_admin.message(Command("users"))
-@admin_only
-async def users_list(message: types.Message):
-    game_id = get_config("current_game")
-    cur.execute(
-        "SELECT username, joined_at FROM users WHERE game_id=? ORDER BY joined_at",
-        (game_id,)
-    )
-    data = cur.fetchall()
-    if not data:
-        await message.answer("📭 Hali ishtirokchi yo'q.")
-        return
-    text = f"👥 <b>Ishtirokchilar ({len(data)} ta):</b>\n\n"
-    for i, (uname, jtime) in enumerate(data[:50], 1):
-        text += f"{i}. @{uname} — {jtime}\n"
-    if len(data) > 50:
-        text += f"\n... va yana {len(data) - 50} ta"
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(f"👥 {get_user_count()} ta user")
 
 @dp_admin.message(Command("setcode"))
 @admin_only
 async def setcode(message: types.Message):
-    parts = message.text.split()
-    if len(parts) < 2:
-        await message.answer("❗ /setcode 1234")
-        return
-    set_config("code", parts[1])
-    await message.answer(f"🔑 Yangi kod: <code>{parts[1]}</code>", parse_mode="HTML")
+    code = message.text.split()[1]
+    set_config("code", code)
+    await message.answer(f"🔑 Kod: {code}")
 
 @dp_admin.message(Command("setwinner"))
 @admin_only
 async def setwinner(message: types.Message):
-    parts = message.text.split()
-    if len(parts) < 2:
-        await message.answer("❗ /setwinner 3")
-        return
-    try:
-        count = int(parts[1])
-        if count < 1:
-            raise ValueError
-        set_config("winner_count", str(count))
-        await message.answer(f"🏆 G'oliblar soni: {count} ta")
-    except:
-        await message.answer("❗ To'g'ri son kiriting!")
+    count = message.text.split()[1]
+    set_config("winner_count", count)
+    await message.answer(f"🏆 Winner: {count}")
 
+# 🔥 WINNER FIXED
 @dp_admin.message(Command("winner"))
 @admin_only
 async def winner(message: types.Message):
-    game_id = get_config("current_game")
-    cur.execute("SELECT user_id, username FROM users WHERE game_id=?", (game_id,))
-    all_users = cur.fetchall()
+
+    # old winners check
+    cur.execute("SELECT username FROM winners")
+    old = [x[0] for x in cur.fetchall()]
+
+    cur.execute("SELECT username FROM users")
+    users = [x[0] for x in cur.fetchall()]
+
+    available = [u for u in users if u not in old]
+
     count = int(get_config("winner_count", "3"))
 
-    if len(all_users) < count:
-        await message.answer(
-            f"⚠️ Kamida {count} ta ishtirokchi kerak.\nHozir: {len(all_users)} ta"
-        )
+    if len(available) < count:
+        await message.answer("❌ Yetarli user yo‘q")
         return
 
-    winners = random.sample(all_users, count)
-    medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 20
+    winners = random.sample(available, count)
 
-    text = "🏆 <b>G'oliblar:</b>\n\n"
-    for i, (uid, uname) in enumerate(winners):
-        text += f"{medals[i]} @{uname}\n"
-    await message.answer(text, parse_mode="HTML")
-
-    for uid, uname in winners:
-        try:
-            await user_bot.send_message(
-                uid,
-                "🎉 <b>Tabriklaymiz!</b>\n\n"
-                "🏆 Siz Giveawayda <b>G'OLIB</b> bo'ldingiz!\n\n"
-                "📩 Tez orada admin siz bilan bog'lanadi.\n"
-                "💫 Omadingiz doim kulib tursin!",
-                parse_mode="HTML"
-            )
-        except:
-            await message.answer(f"⚠️ @{uname} ga xabar yuborilmadi")
-
-@dp_admin.message(Command("clear"))
-@admin_only
-async def clear(message: types.Message):
-    game_id = get_config("current_game")
-    cur.execute("DELETE FROM users WHERE game_id=?", (game_id,))
+    for w in winners:
+        cur.execute("INSERT INTO winners(username, created_at) VALUES (?, ?)",
+                    (w, datetime.now().strftime("%Y-%m-%d %H:%M")))
     conn.commit()
-    await message.answer("🧹 Ro'yxat tozalandi.")
 
-# ================= MAIN (WEBHOOK) =================
+    text = "🏆 G'oliblar:\n\n"
+    for i, w in enumerate(winners, 1):
+        text += f"{i}. @{w}\n"
 
-async def on_startup(app):
-    await user_bot.set_webhook(f"{BASE_URL}{USER_WEBHOOK_PATH}")
-    await admin_bot.set_webhook(f"{BASE_URL}{ADMIN_WEBHOOK_PATH}")
-    logging.info("Webhooks o'rnatildi!")
+    await message.answer(text)
 
-async def on_shutdown(app):
-    await user_bot.delete_webhook()
-    await admin_bot.delete_webhook()
+    # 🔥 congrat message
+    for w in winners:
+        try:
+            cur.execute("SELECT user_id FROM users WHERE username=?", (w,))
+            uid = cur.fetchone()[0]
+            await user_bot.send_message(uid, "🎉 Tabriklaymiz! Siz yutdingiz!")
+        except:
+            pass
 
-def main():
+# 🔄 NEW GAME
+@dp_admin.message(Command("newgame"))
+@admin_only
+async def newgame(message: types.Message):
+    cur.execute("DELETE FROM users")
+    cur.execute("DELETE FROM winners")
+    conn.commit()
+    await message.answer("♻️ Yangi o‘yin boshlandi")
+
+# 📜 HISTORY
+@dp_admin.message(Command("history"))
+@admin_only
+async def history(message: types.Message):
+    cur.execute("SELECT username, created_at FROM winners ORDER BY id DESC LIMIT 10")
+    data = cur.fetchall()
+
+    if not data:
+        await message.answer("Bo‘sh")
+        return
+
+    text = "📜 Oxirgi winnerlar:\n\n"
+    for w in data:
+        text += f"@{w[0]} - {w[1]}\n"
+
+    await message.answer(text)
+
+# ================= MAIN =================
+
+async def main():
     logging.basicConfig(level=logging.INFO)
 
-    app = web.Application()
+    await user_bot.delete_webhook(drop_pending_updates=True)
+    await admin_bot.delete_webhook(drop_pending_updates=True)
 
-    SimpleRequestHandler(dispatcher=dp_user, bot=user_bot).register(app, path=USER_WEBHOOK_PATH)
-    SimpleRequestHandler(dispatcher=dp_admin, bot=admin_bot).register(app, path=ADMIN_WEBHOOK_PATH)
-
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
-
-    setup_application(app, dp_user, bot=user_bot)
-
-    PORT = int(os.environ.get("PORT", 10000))
-    web.run_app(app, host="0.0.0.0", port=PORT)
+    await asyncio.gather(
+        dp_user.start_polling(user_bot),
+        dp_admin.start_polling(admin_bot)
+    )
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
